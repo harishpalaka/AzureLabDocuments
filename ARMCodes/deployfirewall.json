@@ -1,0 +1,498 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "Vnet-name":{
+            "type": "string",
+            "metadata":{
+                "description": "Enter the Virtual-network name"
+            }
+        },
+        "nsg-name": {
+            "type": "string",
+            "metadata": {
+                "description": "Enter network security group name"
+            }
+        },
+        "subnet-name":{
+            "type": "string",
+            "metadata":{
+                "desription":"Enter the subnet-name"
+            }
+        },
+        "vmscalename": {
+            "type": "string",
+            "metadata": {
+                "description": "Enter the vm scale set name"
+            }
+        },
+        "instancecount": {
+            "type": "int",
+            "metadata": {
+                "description": "Enter vm count"
+            }
+        },
+        "osType": {
+            "type": "string",
+            "allowedValues": [
+            "windows",
+            "linux"
+        ],
+            "metadata": {
+                "description": "Enter OS type"
+            }
+        },
+        "licenseType": {
+        "type": "string",
+        "defaultValue": "BYOL",
+        "allowedValues": [
+            "BYOL",
+            "PAYG"
+        ],
+        "metadata": {
+            "description": "License type, only BYOL is supported in Azure US Government."
+        }
+    }
+    },
+    "functions": [],
+    "variables": {
+        "addressPrefix": "192.168.0.0/22",
+        "subnetPrefix": "192.168.0.0/24",
+        "public-ip": "publicip-load",
+        "vmSkuName": "[if(and(equals(environment().name, 'AzureCloud'), equals(parameters('licenseType'), 'PAYG')), '', 'byol')]",
+        "osType": {
+        "linux": {
+            "marketplacePlan": {
+                "name": "[concat('linuxdsvmubuntu', variables('vmSkuName'))]",
+                "publisher": "microsoft-ads",
+                "product": "linux-data-science-vm-ubuntu"
+            },
+            "imageReference": {
+                "publisher": "microsoft-ads",
+                "offer": "linux-data-science-vm-ubuntu",
+                "sku": "[concat('linuxdsvmubuntu', variables('vmSkuName'))]",
+                "version": "latest"
+            },
+            "natBackendPort": 22
+        }
+    }
+    },
+    "resources": [
+       
+        {
+            //  Resource -1 : Create NSG and assign to vnet level
+            "name": "[parameters('nsg-name')]",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2023-04-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                    {
+                         "name": "TCP-allow",
+                        "properties": {
+                            "description": "description",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "80",
+                            "sourceAddressPrefix": "*",
+                            "destinationAddressPrefix": "*",
+                            "access": "Allow",
+                            "priority": 100,
+                            "direction": "Inbound"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            //  Resource-2: Creation of virtual network
+            "name": "[parameters('Vnet-name')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2023-04-01",
+            "location": "[resourceGroup().location]",
+            "tags": {
+                "displayName": "[parameters('Vnet-name')]"
+            },
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[variables('addressPrefix')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[parameters('subnet-name')]",
+                        "properties": {
+                            "addressPrefix": "[variables('subnetPrefix')]",
+                            "networkSecurityGroup":{
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups',parameters('nsg-name'))]"
+                            }
+
+                        }
+                    },
+                    {
+                        "name": "AzureFirewallSubnet",
+                        "properties": {
+                            "addressPrefix": "192.168.1.0/26"
+                        }
+                    }
+
+                ]
+            }
+        },
+        {
+            // resource -3 : Create public IP for load balancer
+            "name": "[variables('public-ip')]",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "apiVersion": "2023-04-01",
+            "location": "[resourceGroup().location]",
+            "tags": {
+                "displayName": "[variables('public-ip')]"
+            },
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic",
+                "dnsSettings": {
+                    "domainNameLabel": "harishpalaka0909"
+                }
+            }
+        },
+        {
+            // resource -4 : creating loadbalancer for nginx application 
+            "name": "loadBalancerExternal1",
+            "type": "Microsoft.Network/loadBalancers",
+            "apiVersion": "2023-04-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses',variables('public-ip'))]"
+            ],
+            "properties": {
+                "frontendIPConfigurations": [
+                    {
+                        "name": "loadBalancerFrontEnd1",
+                        "properties": {
+                            "publicIPAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('public-ip'))]"
+                            }
+                        }
+                    }
+                ],
+                "backendAddressPools": [
+                    {
+                        "name": "loadBalancerBackEndPool1"
+                    }
+                ],
+                // "inboundNatPools": [
+                //     {
+                //         "name": "natRule1",
+                //         "properties": {
+                //             "frontendIPConfiguration": {
+                //                 "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', 'loadBalancerExternal1', 'loadBalancerFrontEnd1')]"
+                //             },
+                //             "protocol": "Tcp",
+                //             "frontendPortRangeStart": 9090,
+                //             "frontendPortRangeEnd": 50120,
+                //             "backendPort": 9091,
+                //             "enableFloatingIP": false
+                //         }
+                //     }
+                // ],
+                     "probes": [
+                    {
+                        "name": "tcpProbe1",
+                        "properties": {
+                            "protocol": "Tcp",
+                            "port": 80,
+                            "intervalInSeconds": 5,
+                            "numberOfProbes": 2
+                        }
+                    }
+                ],
+                "loadBalancingRules": [
+                    {
+                        "name": "LBRule1",
+                        "properties": {
+                            "frontendIPConfiguration": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', 'loadBalancerExternal1', 'loadBalancerFrontEnd1')]"
+                            },
+                            "backendAddressPool": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', 'loadBalancerExternal1', 'loadBalancerBackEndPool1')]"
+                            },
+                            "protocol": "Tcp",
+                            "frontendPort": 80,
+                            "backendPort": 80,
+                            "enableFloatingIP": false,
+                            "idleTimeoutInMinutes": 5,
+                            "probe": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/probes', 'loadBalancerExternal1', 'tcpProbe1')]"
+                            }
+                        }
+                    }
+                ]
+           
+            }
+        },
+        {
+            // Resource - 5 : create vm scale set with 2 machines
+            "type": "Microsoft.Compute/virtualMachineScaleSets",
+            "name": "[parameters('vmscalename')]",
+            "location": "East Asia",
+            "apiVersion": "2019-07-01",
+            "dependsOn": [
+                "[resourceID('Microsoft.Network/loadBalancers','loadBalancerExternal1')]",
+                "[resourceID('Microsoft.Network/virtualNetworks',parameters('Vnet-name'))]"
+            ],
+            "sku": {
+                "name": "Standard_D2_v3",
+                "tier": "Standard",
+                "capacity": "[parameters('instanceCount')]"
+            },
+            "plan": "[variables('osType')[parameters('osType')].marketplacePlan]",
+            "properties": {
+                "overprovision": false,
+                "upgradePolicy": {
+                    "mode": "Manual"
+                },
+                "virtualMachineProfile":{
+                    "storageProfile": {
+                        "osDisk": {
+                            "createOption": "FromImage",
+                            "caching": "ReadWrite"
+                        },
+                        "imageReference": "[variables('osType')[parameters('osType')].imageReference]"
+                    },
+                    "osProfile": {
+                        "computerNamePrefix": "[parameters('vmscalename')]",
+                        "adminUsername":"harish",
+                        "adminPassword":"Reset@1234567890"
+                    },
+                    "networkProfile": {
+                        "networkInterfaceConfigurations": [
+                            {
+                                "name": "harish-nic",
+                                "properties": {
+                                    "primary": true,
+                                    "ipConfigurations": [
+                                        {
+                                            "name": "harish-ipconfig",
+                                            "properties": {
+                                                "subnet": {
+                                                    "id": "[resourceID('Microsoft.Network/virtualNetworks/subnets', parameters('Vnet-name'), parameters('subnet-name'))]"
+                                                },
+                                                "loadBalancerBackendAddressPools": [
+                                                    {
+                                                        "id": "[resourceID('Microsoft.Network/loadBalancers/backendAddressPools', 'loadBalancerExternal1', 'loadBalancerBackEndPool1')]"
+                                                    }
+                                                ]
+                                                // "loadBalancerInboundNatPools": [
+                                                //     {
+                                                //         "id": "[resourceID('Microsoft.Network/loadBalancers/inboundNatPools', 'loadBalancerExternal1', 'natRule1')]"
+                                                //     }
+                                                // ]
+
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+                //Rescource - 6 setup autoscale to virtual machine scale set
+            "type": "Microsoft.Insights/autoscaleSettings",
+            "apiVersion": "2015-04-01",
+            "name": "autoscalewad",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "name": "autoscalewad",
+                "targetResourceUri": "[resourceId('Microsoft.Compute/virtualMachineScaleSets/', parameters('vmscalename'))]",
+                "enabled": true,
+                "profiles": [
+                {
+                    "name": "Profile1",
+                    "capacity": {
+                    "minimum": "2",
+                    "maximum": "3",
+                    "default": "2"
+                    },
+                    "rules": [
+                    {
+                        "metricTrigger": {
+                        "metricName": "Percentage CPU",
+                        "metricResourceUri": "[resourceId('Microsoft.Compute/virtualMachineScaleSets/', parameters('vmscalename'))]",
+                        "timeGrain": "PT1M",
+                        "statistic": "Average",
+                        "timeWindow": "PT5M",
+                        "timeAggregation": "Average",
+                        "operator": "GreaterThan",
+                        "threshold": 72
+                        },
+                        "scaleAction": {
+                        "direction": "Increase",
+                        "type": "ChangeCount",
+                        "value": "1",
+                        "cooldown": "PT1M"
+                        }
+                    },
+                    {
+                        "metricTrigger": {
+                        "metricName": "Percentage CPU",
+                        "metricResourceUri": "[resourceId('Microsoft.Compute/virtualMachineScaleSets/', parameters('vmscalename'))]",
+                        "timeGrain": "PT1M",
+                        "statistic": "Average",
+                        "timeWindow": "PT5M",
+                        "timeAggregation": "Average",
+                        "operator": "LessThan",
+                        "threshold": 28
+                        },
+                        "scaleAction": {
+                        "direction": "Decrease",
+                        "type": "ChangeCount",
+                        "value": "1",
+                        "cooldown": "PT5M"
+                        }
+                    }
+                    ]
+                }
+                ]
+            }
+        },
+        {
+            //Resource - 7 Create a firewall and assign to Vnet
+                    "name": "firewall1",
+                    "type": "Microsoft.Network/azureFirewalls",
+                    "apiVersion": "2023-04-01",
+                    "location": "[resourceGroup().location]",
+                    "tags": {},
+                    "properties": {
+                        // "applicationRuleCollections": [
+                        //     {
+                        //         "name": "appCollectionName1",
+                        //         "properties": {
+                        //             "priority": 100,
+                        //             "action": {
+                        //                 "type": "Allow"
+                        //             },
+                        //             "rules": [
+                        //                 {
+                        //                     "name": "appRuleName1",
+                        //                     "description": "appRuleDescription",
+                        //                     "sourceAddresses": [
+                        //                         "10.0.0.4"
+                        //                     ],
+                        //                     "protocols": [
+                        //                         {
+                        //                             "protocolType": "Http",
+                        //                             "port": 80
+                        //                         }
+                        //                     ],
+                        //                     "targetFqdns": [
+                        //                         "www.microsoft.com"
+                        //                     ],
+                        //                     "fqdnTags": []
+                        //                 }
+                        //             ]
+                        //         }
+                        //     }
+                        // ],
+                        "natRuleCollections": [
+                            {
+                                "name": "natCollectionName1",
+                                "properties": {
+                                    "priority": 100,
+                                    "action": {
+                                        "type": "Dnat"
+                                    },
+                                    "rules": [
+                                        {
+                                            "name": "natRuleName1",
+                                            "description": "natRuleDescription",
+                                            "sourceAddresses": [
+                                                "10.0.0.4"
+                                            ],
+                                            "destinationAddresses": [
+                                                "[reference(resourceId('Microsoft.Network/publicIPAddresses', 'publicIPAddress1')).ipAddress]"
+                                            ],
+                                            "destinationPorts": [
+                                                "3389"
+                                            ],
+                                            "protocols": [
+                                                "TCP"
+                                            ],
+                                            "translatedAddress": "10.0.0.254",
+                                            "translatedPort": "2500"
+                                        }
+                                    ]
+                                }
+                            }
+                        ],
+                        // "networkRuleCollections": [
+                        //     {
+                        //         "name": "networkCollectionName",
+                        //         "properties": {
+                        //             "priority": 100,
+                        //             "action": {
+                        //                 "type": "Deny"
+                        //             },
+                        //             "rules": [
+                        //                 {
+                        //                     "name": "networkRuleName",
+                        //                     "description": "networkRuleDescription",
+                        //                     "sourceAddresses": [
+                        //                         "10.0.0.4"
+                        //                     ],
+                        //                     "destinationAddresses": [
+                        //                         "10.0.1.4"
+                        //                     ],
+                        //                     "destinationPorts": [
+                        //                         "1"
+                        //                     ],
+                        //                     "protocols": [
+                        //                         "TCP"
+                        //                     ]
+                        //                 }
+                        //             ]
+                        //         }
+                        //     }
+                        // ],
+                        "ipConfigurations": [
+                            {
+                                "name": "ipConfigName",
+                                "properties": {
+                                    "subnet": {
+                                        "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets',parameters('Vnet-name'), 'AzureFirewallSubnet')]"
+                                    },
+                                    "publicIPAddress": {
+                                        "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'publicIPAddress1')]"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Network/publicIPAddresses', 'publicIPAddress1')]"
+                    ]
+            },
+            {
+                    "name": "publicIPAddress1",
+                    "type": "Microsoft.Network/publicIPAddresses",
+                    "apiVersion": "2023-04-01",
+                    "location": "[resourceGroup().location]",
+                    "sku": {
+                        "name": "standard"
+                    },
+                    "tags": {
+                        "createdFor": "firewall1"
+                    },
+                    "properties": {
+                        "publicIPAllocationMethod": "Static",
+                        "dnsSettings": {
+                            "domainNameLabel": "[concat('firewall1', uniqueString(resourceGroup().id))]"
+                        }
+                    }
+            }
+            ],
+    "outputs": {}
+}

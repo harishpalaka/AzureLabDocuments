@@ -1,0 +1,297 @@
+    {
+        "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+        "contentVersion": "1.0.0.0",
+        "parameters": {
+            "Vnet-name":{
+                "type": "string",
+                "metadata":{
+                    "description": "Enter the Virtual-network name"
+                }
+            },
+            "nsg-name": {
+                "type": "string",
+                "metadata": {
+                    "description": "description"
+                }
+            },
+            "subnet-name":{
+                "type": "string",
+                "metadata":{
+                    "desription":"Enter the subnet-name"
+                }
+            },
+            "vmscalename": {
+                "type": "string",
+                "metadata": {
+                    "description": "Enter the vm scale set name"
+                }
+            },
+            "instancecount": {
+                "type": "int",
+                "metadata": {
+                    "description": "Enter vm count"
+                }
+            },
+            "osType": {
+                "type": "string",
+                "allowedValues": [
+                "windows",
+                "linux"
+            ],
+                "metadata": {
+                    "description": "Enter OS type"
+                }
+            },
+            "licenseType": {
+            "type": "string",
+            "defaultValue": "BYOL",
+            "allowedValues": [
+                "BYOL",
+                "PAYG"
+            ],
+            "metadata": {
+                "description": "License type, only BYOL is supported in Azure US Government."
+            }
+        }
+        },
+        "functions": [],
+        "variables": {
+            "addressPrefix": "192.168.0.0/22",
+            "subnetPrefix": "192.168.0.0/22",
+            "public-ip": "publicip-load",
+            "vmSkuName": "[if(and(equals(environment().name, 'AzureCloud'), equals(parameters('licenseType'), 'PAYG')), '', 'byol')]",
+            "osType": {
+            "linux": {
+                "marketplacePlan": {
+                    "name": "[concat('linuxdsvmubuntu', variables('vmSkuName'))]",
+                    "publisher": "microsoft-ads",
+                    "product": "linux-data-science-vm-ubuntu"
+                },
+                "imageReference": {
+                    "publisher": "microsoft-ads",
+                    "offer": "linux-data-science-vm-ubuntu",
+                    "sku": "[concat('linuxdsvmubuntu', variables('vmSkuName'))]",
+                    "version": "latest"
+                },
+                "natBackendPort": 22
+            }
+        }
+        },
+        "resources": [
+            {
+
+                //  Resource-1: Creation of virtual network
+                "name": "[parameters('Vnet-name')]",
+                "type": "Microsoft.Network/virtualNetworks",
+                "apiVersion": "2023-04-01",
+                "location": "[resourceGroup().location]",
+                "tags": {
+                    "displayName": "[parameters('Vnet-name')]"
+                },
+                "properties": {
+                    "addressSpace": {
+                        "addressPrefixes": [
+                            "[variables('addressPrefix')]"
+                        ]
+                    },
+                    "subnets": [
+                        {
+                            "name": "[parameters('subnet-name')]",
+                            "properties": {
+                                "addressPrefix": "[variables('subnetPrefix')]",
+                                "networkSecurityGroup":{
+                                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups',parameters('nsg-name'))]"
+                                }
+
+                            }
+                        }
+    
+                    ]
+                }
+            },
+            {
+                //  Resource -2 : Create NSG and assign to vnet level
+                "name": "[parameters('nsg-name')]",
+                "type": "Microsoft.Network/networkSecurityGroups",
+                "apiVersion": "2023-04-01",
+                "location": "[resourceGroup().location]",
+                "properties": {
+                    "securityRules": [
+                        {
+                            "name": "TCP-allow",
+                            "properties": {
+                                "description": "description",
+                                "protocol": "Tcp",
+                                "sourcePortRange": "*",
+                                "destinationPortRange": "80",
+                                "sourceAddressPrefix": "*",
+                                "destinationAddressPrefix": "*",
+                                "access": "Allow",
+                                "priority": 100,
+                                "direction": "Inbound"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                // resource -3 : Create public IP for load balancer
+                "name": "[variables('public-ip')]",
+                "type": "Microsoft.Network/publicIPAddresses",
+                "apiVersion": "2023-04-01",
+                "location": "[resourceGroup().location]",
+                "tags": {
+                    "displayName": "[variables('public-ip')]"
+                },
+                "properties": {
+                    "publicIPAllocationMethod": "Dynamic",
+                    "dnsSettings": {
+                        "domainNameLabel": "harishpalakasahitharyan"
+                    }
+                }
+            },
+        {
+            // resource -4 : creating loadbalancer for nginx application 
+            "name": "loadBalancerExternal1",
+            "type": "Microsoft.Network/loadBalancers",
+            "apiVersion": "2023-04-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses',variables('public-ip'))]"
+            ],
+            "properties": {
+                "frontendIPConfigurations": [
+                    {
+                        "name": "loadBalancerFrontEnd1",
+                        "properties": {
+                            "publicIPAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('public-ip'))]"
+                            }
+                        }
+                    }
+                ],
+                "backendAddressPools": [
+                    {
+                        "name": "loadBalancerBackEndPool1"
+                    }
+                ],
+                // "inboundNatPools": [
+                //     {
+                //         "name": "natRule1",
+                //         "properties": {
+                //             "frontendIPConfiguration": {
+                //                 "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', 'loadBalancerExternal1', 'loadBalancerFrontEnd1')]"
+                //             },
+                //             "protocol": "Tcp",
+                //             "frontendPortRangeStart": 9090,
+                //             "frontendPortRangeEnd": 50120,
+                //             "backendPort": 9091,
+                //             "enableFloatingIP": false
+                //         }
+                //     }
+                // ],
+                "loadBalancingRules": [
+                    {
+                        "name": "LBRule1",
+                        "properties": {
+                            "frontendIPConfiguration": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', 'loadBalancerExternal1', 'loadBalancerFrontEnd1')]"
+                            },
+                            "backendAddressPool": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', 'loadBalancerExternal1', 'loadBalancerBackEndPool1')]"
+                            },
+                            "protocol": "Tcp",
+                            "frontendPort": 80,
+                            "backendPort": 80,
+                            "enableFloatingIP": false,
+                            "idleTimeoutInMinutes": 5
+                            // "probe": {
+                            //     "id": "[resourceId('Microsoft.Network/loadBalancers/probes', 'loadBalancerExternal1', 'tcpProbe1')]"
+                            // }
+                        }
+                    }
+                 ], 
+                "probes": [
+                    {
+                        "name": "tcpProbe1",
+                        "properties": {
+                            "protocol": "Tcp",
+                            "port": 80,
+                            "intervalInSeconds": 5,
+                            "numberOfProbes": 2
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            // Resource - 5 : create vm scale set (manual scale as of now )
+            "type": "Microsoft.Compute/virtualMachineScaleSets",
+            "name": "[parameters('vmscalename')]",
+            "location": "East Asia",
+            "apiVersion": "2019-07-01",
+            "dependsOn": [
+                "[resourceID('Microsoft.Network/loadBalancers','loadBalancerExternal1')]",
+                "[resourceID('Microsoft.Network/virtualNetworks',parameters('Vnet-name'))]"
+            ],
+            "sku": {
+                "name": "Standard_D2_v3",
+                "tier": "Standard",
+                "capacity": "[parameters('instanceCount')]"
+            },
+            "plan": "[variables('osType')[parameters('osType')].marketplacePlan]",
+            "properties": {
+                "overprovision": false,
+                "upgradePolicy": {
+                    "mode": "Manual"
+                },
+                "virtualMachineProfile":{
+                    "storageProfile": {
+                        "osDisk": {
+                            "createOption": "FromImage",
+                            "caching": "ReadWrite"
+                        },
+                        "imageReference": "[variables('osType')[parameters('osType')].imageReference]"
+                    },
+                    "osProfile": {
+                        "computerNamePrefix": "[parameters('vmscalename')]",
+                        "adminUsername":"harish",
+                        "adminPassword":"Reset@1234567890"
+                    },
+                    "networkProfile": {
+                        "networkInterfaceConfigurations": [
+                            {
+                                "name": "harish-nic",
+                                "properties": {
+                                    "primary": true,
+                                    "ipConfigurations": [
+                                        {
+                                            "name": "harish-ipconfig",
+                                            "properties": {
+                                                "subnet": {
+                                                    "id": "[resourceID('Microsoft.Network/virtualNetworks/subnets', parameters('Vnet-name'), parameters('subnet-name'))]"
+                                                },
+                                                "loadBalancerBackendAddressPools": [
+                                                    {
+                                                        "id": "[resourceID('Microsoft.Network/loadBalancers/backendAddressPools', 'loadBalancerExternal1', 'loadBalancerBackEndPool1')]"
+                                                    }
+                                                ]
+                                                // "loadBalancerInboundNatPools": [
+                                                //     {
+                                                //         "id": "[resourceID('Microsoft.Network/loadBalancers/inboundNatPools', 'loadBalancerExternal1', 'natRule1')]"
+                                                //     }
+                                                // ]
+
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        ],
+        "outputs": {}
+    }

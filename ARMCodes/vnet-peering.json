@@ -1,0 +1,131 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "vnet-01": {
+            "type": "string",
+            "metadata":{
+                "description": "Enter vnet-01 name"
+            }
+        },
+        "vnet-02":{
+            "type": "string",
+            "metadata": {
+                "description": "Enter vnet-02 name"
+            }
+        },
+        "subnet-01": {
+            "type": "string",
+            "metadata": {
+                "description": "Enter subnetname for Vnet-01"
+            }
+        },
+        "subnet-02": {
+            "type": "string",
+            "metadata": {
+                "description": "Enter subnetname for vnet-02"
+            }
+        }
+        
+    },
+    "functions": [],
+    "variables": {
+        "vnetconfig-01":{
+            "addressSpacePrefix":"10.0.0.0/24",
+            "subnetPrefix": "10.0.0.0/24"
+        },
+        "vnetconfig-02":{
+            "addressSpacePrefix":"192.168.0.0/24",
+            "subnetPrefix":"192.168.0.0/24"
+        }
+    },
+    "resources": [
+        {
+            "name": "[parameters('vnet-01')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2023-04-01",
+            "location": "[resourceGroup().location]",
+            "tags": {
+                "displayName": "[parameters('vnet-01')]"
+            },
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes":[
+                         "[variables('vnetconfig-01').addressSpacePrefix]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[parameters('subnet-01')]",
+                        "properties": {
+                            "addressPrefix": "[variables('vnetconfig-01').subnetPrefix]"
+                        }
+                    }
+ 
+                ]
+            }
+        },
+        {
+            "name": "[parameters('vnet-02')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2023-04-01",
+            "location": "[resourceGroup().location]",
+            "tags": {
+                "displayName": "[parameters('vnet-01')]"
+            },
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[variables('vnetconfig-02').addressSpacePrefix]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[parameters('subnet-02')]",
+                        "properties": {
+                            "addressPrefix": "[variables('vnetconfig-02').subnetPrefix]"
+                        }
+                    }
+  
+                ]
+            }
+        }, 
+        {
+      "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
+      "apiVersion": "2020-05-01",
+      "name": "[format('{0}/{1}', parameters('vnet-01'), format('{0}-{1}', parameters('vnet-01'), parameters('vnet-02')))]",
+        "properties": {
+        "allowVirtualNetworkAccess": true,
+        "allowForwardedTraffic": false,
+        "allowGatewayTransit": false,
+        "useRemoteGateways": false,
+        "remoteVirtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnet-02'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnet-01'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnet-02'))]"
+      ]
+    },
+    {
+        "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
+        "apiVersion": "2020-05-01",
+        "name": "[format('{0}/{1}',parameters('vnet-02'),format('{0}-{1}',parameters('vnet-02'),parameters('vnet-01')))]",
+        "properties": {
+            "allowVirtualNetworkAccess": true,
+            "allowForwardedTraffic": false,
+            "allowGatewayTransit": false,
+            "useRemoteGateways": false,
+            "remoteVirtualNetwork": {
+                "id": "[resourceId('Microsoft.Network/virtualNetworks',parameters('vnet-01'))]"
+            }
+        },
+         "dependsOn": [
+           "[resourceId('Microsoft.Network/virtualNetworks',parameters('vnet-01'))]",
+           "[resourceId('Microsoft.Network/virtualNetworks',parameters('vnet-02'))]"
+        ]
+    }
+    ],
+    "outputs": {}
+}
