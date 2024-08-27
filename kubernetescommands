@@ -1,3 +1,4 @@
 kubectl create -f pod.yml #create new pod
 kubectl get pods #list of all pods 
 kubectl get pods -o wide # to see full IP address of pods
+kubectl delete pod podname/nginx #delete the pod nginx
